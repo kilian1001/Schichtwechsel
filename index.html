@@ -1,1 +1,648 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schichtwechsel Recruiting-Simulation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+/* ================================================================
+   HIER die Firebase-Konfiguration einfügen (aus der Firebase-Konsole).
+   Solange hier null steht, läuft die Seite im Einzelmodus ohne
+   gemeinsamen Pool.
+   ================================================================ */
+var FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCD-MSMmyyMFBo5am10nNON6-Bo9saFUzY",
+  authDomain: "mobilejob-130d9.firebaseapp.com",
+  databaseURL: "https://mobilejob-130d9-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "mobilejob-130d9",
+  storageBucket: "mobilejob-130d9.firebasestorage.app",
+  messagingSenderId: "886862854494",
+  appId: "1:886862854494:web:fb70bad6882ee4a6c4b7cf"
+};
+</script>
+<style>
+/* Layout: one phone-width column, one step per screen, sticky status bar in the hiring round. Host view is wider for the projector. */
+:root{
+  --bg:#eef1f5; --surface:#ffffff; --ink:#16263a; --muted:#5b6b7e; --line:#d3dae3;
+  --denim:#1f4673; --denim-ink:#ffffff; --signal:#f5b301; --signal-ink:#231a00;
+  --good:#1d7a4c; --warn:#a86200; --crit:#b3261e;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Barlow","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    color-scheme:dark;
+    --bg:#0f1722; --surface:#182434; --ink:#e8edf3; --muted:#9aa9ba; --line:#2c3b4f;
+    --denim:#5b93d1; --denim-ink:#08121e;
+    --good:#56c48d; --warn:#e9a23b; --crit:#f2867f;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45}
+main{max-width:520px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:16px}
+main.host{max-width:920px}
+h1,h2{font-family:var(--display);font-weight:700;line-height:1.05;margin:0;text-wrap:balance;letter-spacing:.01em}
+h1{font-size:2.5rem;text-transform:uppercase}
+h2{font-size:1.7rem;text-transform:uppercase}
+p{margin:0}
+.muted{color:var(--muted)}
+.small{font-size:.875rem}
+.step{font-family:var(--display);font-weight:600;font-size:1rem;letter-spacing:.08em;text-transform:uppercase;color:var(--denim)}
+.stripe{height:8px;border-radius:4px;background:repeating-linear-gradient(135deg,var(--signal) 0 12px,var(--ink) 12px 24px)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.stack{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.between{justify-content:space-between}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--signal);outline-offset:2px}
+.btn{border:0;border-radius:8px;padding:14px 18px;font-weight:600;font-size:1.05rem;background:var(--denim);color:var(--denim-ink);width:100%}
+.btn.signal{background:var(--signal);color:var(--signal-ink)}
+.btn.ghost{background:transparent;color:var(--denim);border:2px solid var(--denim)}
+.btn.danger{background:transparent;color:var(--crit);border:2px solid var(--crit)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.chip{border:1.5px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 14px;font-weight:500}
+.chip[aria-pressed="true"]{background:var(--denim);border-color:var(--denim);color:var(--denim-ink)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tpl{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:12px;text-align:left;min-height:56px;font-weight:600}
+.tpl[aria-pressed="true"]{border-color:var(--denim);box-shadow:inset 0 0 0 2px var(--denim)}
+label.field{display:flex;flex-direction:column;gap:6px;font-weight:600}
+input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:1.5px solid var(--line);border-radius:8px;padding:12px}
+.group-title{font-weight:600}
+.big{font-family:var(--display);font-weight:700;font-size:3.2rem;line-height:1;font-variant-numeric:tabular-nums}
+.huge{font-family:var(--display);font-weight:700;font-size:6rem;line-height:1;font-variant-numeric:tabular-nums}
+.num{font-variant-numeric:tabular-nums}
+.tag{display:inline-block;border-radius:4px;padding:2px 8px;font-size:.8rem;font-weight:600;border:1px solid var(--line);color:var(--muted)}
+.tag.good{color:var(--good);border-color:var(--good)}
+.tag.warn{color:var(--warn);border-color:var(--warn)}
+.tag.crit{color:var(--crit);border-color:var(--crit)}
+.tag.own{background:var(--signal);color:var(--signal-ink);border-color:var(--signal)}
+.hud{position:sticky;top:0;z-index:5;background:var(--ink);color:var(--bg);border-radius:0 0 10px 10px;padding:10px 14px;margin:-20px -16px 0;display:flex;flex-direction:column;gap:8px}
+.hud .row{gap:14px}
+.hud .lbl{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;opacity:.75}
+.hud .val{font-family:var(--display);font-weight:700;font-size:1.6rem;line-height:1;font-variant-numeric:tabular-nums}
+.hud .val.over{color:var(--signal)}
+.bar{height:6px;background:rgba(127,127,127,.35);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--signal);width:100%}
+.cand{background:var(--surface);border:1.5px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;text-align:left;width:100%}
+.cand[aria-pressed="true"]{border-color:var(--good);box-shadow:inset 0 0 0 2px var(--good)}
+.cand.gone{opacity:.45}
+.cand .name{font-weight:600;font-size:1.05rem;overflow-wrap:anywhere}
+.cand .pay{font-family:var(--display);font-weight:700;font-size:1.35rem;font-variant-numeric:tabular-nums}
+.toast{position:fixed;left:16px;right:16px;bottom:16px;max-width:488px;margin:0 auto;background:var(--crit);color:#fff;border-radius:8px;padding:12px 14px;font-weight:600;z-index:10}
+.toast[hidden]{display:none}
+.list{display:flex;flex-direction:column;gap:8px}
+ol.q{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:4px 12px}
+.kv span:nth-child(even){font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.rank{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center}
+.rank .track{grid-column:1 / -1;height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin-bottom:6px}
+.rank .track i{display:block;height:100%;background:var(--denim)}
+.hostgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;align-items:start}
+.qr{background:#fff;border-radius:10px;padding:12px;display:flex;justify-content:center}
+.qr svg{width:100%;max-width:300px;height:auto}
+.url{font-weight:600;overflow-wrap:anywhere}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px}
+.tile .v{font-family:var(--display);font-weight:700;font-size:2rem;line-height:1.1;font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:no-preference){.bar i{transition:width 1s linear}}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>
+(function(){
+"use strict";
 
+/* ---------- Spielwerte (frei erfunden, keine Marktdaten) ---------- */
+var JOBS = {
+  elektrik:{label:"Elektriker/in", short:"Elektrik", base:3200},
+  fahrer:{label:"Berufskraftfahrer/in", short:"Fahrer", base:3000},
+  lager:{label:"Lagerhelfer/in", short:"Lager", base:2500},
+  landwirt:{label:"Landwirt/in", short:"Landwirt.", base:2700},
+  bergbau:{label:"Bergmann/-frau", short:"Bergbau", base:3400},
+  baecker:{label:"Bäcker/in", short:"Bäckerei", base:2600},
+  dach:{label:"Dachdecker/in", short:"Dach", base:3100},
+  kfz:{label:"Kfz-Mechatroniker/in", short:"Kfz", base:3100},
+  reinigung:{label:"Gebäudereiniger/in", short:"Reinigung", base:2400},
+  pflege:{label:"Pflegehelfer/in", short:"Pflege", base:2700}
+};
+var TEMPLATES = ["elektrik","fahrer","lager","landwirt","bergbau","baecker","dach","kfz","reinigung","pflege"];
+var EXP = ["unter 1 Jahr","1–3 Jahre","4–9 Jahre","10+ Jahre"];
+var AVAIL = ["sofort","in 4 Wochen","in 3 Monaten"];
+var WISH = [{l:"bescheiden",d:-150},{l:"marktüblich",d:0},{l:"selbstbewusst",d:250}];
+var SECONDS = 90, LEAVE_AT = [25,45,65], ROOM = "sw/main";
+var NAMES = ["Alex","Kim","Robin","Sascha","Toni","Jona","Mika","Luca","Charlie","Noa"];
+var FILL_NAMES = ["Murat K.","Jana S.","Tom B.","Andrzej W.","Selin A.","Uwe H.","Fatima R.","Kevin M.","Dragan P."];
+var FILL_PROFILES = [
+  {exp:3,avail:0,wish:2,shift:true,car:true},
+  {exp:0,avail:0,wish:0,shift:true,car:false},
+  {exp:2,avail:1,wish:1,shift:false,car:true}
+];
+var SOLO_EXTRA = [
+  {id:"x1",name:"Lena F.",job:"baecker",exp:2,avail:0,wish:1,shift:true,car:false},
+  {id:"x2",name:"Pawel N.",job:"dach",exp:2,avail:1,wish:1,shift:false,car:true},
+  {id:"x3",name:"Maria C.",job:"reinigung",exp:3,avail:0,wish:0,shift:true,car:false},
+  {id:"x4",name:"Henrik J.",job:"landwirt",exp:1,avail:0,wish:1,shift:true,car:true},
+  {id:"x5",name:"Deniz Y.",job:"kfz",exp:2,avail:2,wish:2,shift:false,car:true}
+];
+
+function pay(c){ return JOBS[c.job].base + c.exp*150 + WISH[c.wish].d; }
+function quality(c){ return c.exp + [3,1,0][c.avail] + (c.shift?1:0) + (c.car?1:0); }
+function clampInt(v,max){ v = Math.floor(Number(v)); return (v>=0 && v<=max) ? v : 0; }
+/* Daten aus der gemeinsamen Datenbank sind fremde Eingaben: prüfen und kürzen. */
+function cleanCand(id, raw){
+  if(!raw || typeof raw!=="object" || !JOBS[raw.job]) return null;
+  return {id:String(id), name:String(raw.name||"Ohne Namen").slice(0,18), job:raw.job,
+    exp:clampInt(raw.exp,3), avail:clampInt(raw.avail,2), wish:clampInt(raw.wish,2),
+    shift:!!raw.shift, car:!!raw.car};
+}
+
+/* ---------- Identität und Modus ---------- */
+var IS_HOST = /[?&#]host\b/.test(location.search+location.hash);
+var uid;
+try{ uid = localStorage.getItem("sw_uid"); if(!uid){ uid = "u"+Math.random().toString(36).slice(2,12); localStorage.setItem("sw_uid",uid); } }
+catch(e){ uid = "u"+Math.random().toString(36).slice(2,12); }
+
+var LIVE = false, room = null;
+var L = {state:null, cands:{}, hires:{}, loaded:false, failed:false};
+try{
+  if(FIREBASE_CONFIG && FIREBASE_CONFIG.databaseURL && window.firebase){
+    firebase.initializeApp(FIREBASE_CONFIG);
+    room = firebase.database().ref(ROOM);
+    LIVE = true;
+  }
+}catch(e){ LIVE = false; }
+
+/* ---------- Zustand ---------- */
+var S = {
+  screen:"start", round:null,
+  me:{id:uid,name:NAMES[Math.floor(Math.random()*NAMES.length)],job:null,exp:1,avail:0,wish:1,shift:true,car:true},
+  applyStart:0, applySecs:0,
+  G:null,                       // aktuelles Spiel: {jobs,budget,pool,leavers}
+  picks:[], gone:{}, lost:[], left:SECONDS, timer:null, usedSecs:0, filter:"alle",
+  confirmReset:false
+};
+var app = document.getElementById("app");
+var toastEl = document.getElementById("toast"), toastT = null;
+
+/* ---------- Helfer ---------- */
+function el(tag, attrs, kids){
+  var n = document.createElement(tag), k;
+  if(attrs) for(k in attrs){
+    if(k==="text") n.textContent = attrs[k];
+    else if(k==="on") for(var e in attrs.on) n.addEventListener(e, attrs.on[e]);
+    else if(attrs[k]!==false && attrs[k]!=null) n.setAttribute(k, attrs[k]===true?"":attrs[k]);
+  }
+  (kids||[]).forEach(function(c){ if(c) n.appendChild(typeof c==="string"?document.createTextNode(c):c); });
+  return n;
+}
+function eur(n){ return n.toLocaleString("de-DE")+" €"; }
+function toast(msg){
+  toastEl.textContent = msg; toastEl.hidden = false;
+  clearTimeout(toastT); toastT = setTimeout(function(){ toastEl.hidden = true; }, 3500);
+}
+function go(screen){ S.screen = screen; render(); window.scrollTo(0,0); }
+function chips(id, options, value, onPick){
+  return el("div",{class:"row",role:"group",id:id}, options.map(function(o,i){
+    return el("button",{type:"button",class:"chip",id:id+"-"+i,"aria-pressed":String(value===i),text:o,on:{click:function(){ onPick(i); }}});
+  }));
+}
+function byId(id){ var p = S.G.pool; for(var i=0;i<p.length;i++) if(p[i].id===id) return p[i]; return null; }
+function spent(){ return S.picks.reduce(function(s,id){ return s+pay(byId(id)); },0); }
+function candList(){ return Object.keys(L.cands).map(function(id){ return cleanCand(id,L.cands[id]); }).filter(Boolean); }
+function phase(){ return (L.state && L.state.phase) || "apply"; }
+
+/* ---------- Spielaufbau ---------- */
+/* Wählt die 3 offenen Stellen nach den häufigsten Berufen im Pool, füllt dünn besetzte Berufe
+   mit Beispielkandidaten auf und legt fest, wer wann abspringt. */
+function buildGame(real){
+  var count = {};
+  real.forEach(function(c){ count[c.job] = (count[c.job]||0)+1; });
+  var jobs = TEMPLATES.slice().sort(function(a,b){ return (count[b]||0)-(count[a]||0) || TEMPLATES.indexOf(a)-TEMPLATES.indexOf(b); }).slice(0,3);
+  var fillers = {}, n = 0;
+  jobs.forEach(function(j){
+    for(var i=(count[j]||0); i<3; i++){
+      var p = FILL_PROFILES[i];
+      fillers["f"+n] = {name:FILL_NAMES[n%FILL_NAMES.length],job:j,exp:p.exp,avail:p.avail,wish:p.wish,shift:p.shift,car:p.car};
+      n++;
+    }
+  });
+  var all = real.concat(Object.keys(fillers).map(function(id){ return cleanCand(id,fillers[id]); }));
+  var leavers = {};
+  jobs.forEach(function(j,i){
+    var best = all.filter(function(c){ return c.job===j && c.avail===0; }).sort(function(a,b){ return quality(b)-quality(a); })[0];
+    if(best) leavers[best.id] = LEAVE_AT[i];
+  });
+  var budget = jobs.reduce(function(s,j){ return s+JOBS[j].base; },0) + 600;
+  return {jobs:jobs,budget:budget,fillers:fillers,leavers:leavers};
+}
+function soloGame(){
+  var b = buildGame([]);
+  var pool = Object.keys(b.fillers).map(function(id){ return cleanCand(id,b.fillers[id]); });
+  pool.splice(5,0,S.me);
+  return {jobs:b.jobs,budget:b.budget,pool:pool.concat(SOLO_EXTRA),leavers:b.leavers};
+}
+function liveGame(){
+  var st = L.state || {};
+  var jobs = (Array.isArray(st.jobs)?st.jobs:[]).filter(function(j){ return JOBS[j]; }).slice(0,3);
+  var pool = candList();
+  var fl = st.fillers||{};
+  Object.keys(fl).forEach(function(id){ var c = cleanCand(id,fl[id]); if(c) pool.push(c); });
+  if(!pool.some(function(c){ return c.id===uid; }) && S.me.job) pool.unshift(S.me);
+  pool.sort(function(a,b){ return a.id<b.id?-1:1; });
+  return {jobs:jobs,budget:Number(st.budget)||9300,pool:pool,leavers:st.leavers||{}};
+}
+
+/* Punkte: Stelle passt 4, Erfahrung 0–3, Verfügbarkeit 3/1/0, Schicht 1, Auto 1. Max. 12 pro Person. */
+function scoreAll(){
+  var used = {}, rows = [], total = 0, G = S.G;
+  S.picks.forEach(function(id){
+    var c = byId(id), match = G.jobs.indexOf(c.job)>-1 && !used[c.job];
+    if(match) used[c.job] = true;
+    var p = (match?4:0) + quality(c);
+    rows.push({c:c,match:match,points:p}); total += p;
+  });
+  var over = Math.max(0, spent()-G.budget), malus = Math.ceil(over/100);
+  var unfilled = G.jobs.filter(function(j){ return !used[j]; });
+  return {rows:rows,total:Math.max(0,total-malus),malus:malus,over:over,unfilled:unfilled};
+}
+
+/* ---------- Teilnehmer-Screens ---------- */
+function start(){
+  return [
+    el("div",{class:"stripe"}),
+    el("p",{class:"step",text:"Recruiting-Simulation · Blue Collar"}),
+    el("h1",{text:"Schichtwechsel"}),
+    el("p",{text:"Erst bewirbst du dich. Dann wechselst du die Seite und stellst selbst ein."}),
+    el("div",{class:"card"},[
+      el("p",{},[el("b",{text:"Runde 1: "}),"Du schickst eine Kurzbewerbung für einen gewerblichen Job ab."]),
+      el("p",{},[el("b",{text:"Runde 2: "}), LIVE ? "Du besetzt als Recruiter 3 Stellen aus dem Pool, den der Kurs gerade erstellt hat. Du hast "+SECONDS+" Sekunden." : "Du besetzt als Recruiter 3 Stellen. Du hast "+SECONDS+" Sekunden und ein festes Budget."])
+    ]),
+    el("button",{class:"btn signal",id:"btn-start",type:"button",text:"Los geht's",on:{click:function(){ S.applyStart = Date.now(); S.round = L.state?L.state.round:null; go("apply"); }}}),
+    el("p",{class:"small muted",text:(LIVE?"Gemeinsamer Kurs-Pool aktiv. ":"Einzelmodus ohne gemeinsamen Pool. ")+"Alle Personen, Firmen und Gehälter sind erfunden."})
+  ];
+}
+
+function apply(){
+  var m = S.me;
+  var nameInput = el("input",{type:"text",id:"cand-name",maxlength:"18",value:m.name,autocomplete:"off",on:{input:function(e){ m.name = e.target.value; }}});
+  return [
+    el("p",{class:"step",text:"Runde 1 von 2 · Du bewirbst dich"}),
+    el("h2",{text:"Kurzbewerbung"}),
+    el("p",{class:"muted",text:"Kein Anschreiben, kein Lebenslauf als PDF. Wähle ein Profil und passe es an."}),
+    el("div",{class:"stack"},[
+      el("p",{class:"group-title",text:"Welcher Beruf?"}),
+      el("div",{class:"grid2",id:"tpl"}, TEMPLATES.map(function(j){
+        return el("button",{type:"button",class:"tpl",id:"tpl-"+j,"aria-pressed":String(m.job===j),text:JOBS[j].label,on:{click:function(){ m.job=j; render(); }}});
+      }))
+    ]),
+    el("label",{class:"field",for:"cand-name"},["Vorname deiner Figur", nameInput]),
+    el("div",{class:"stack"},[
+      el("p",{class:"group-title",text:"Berufserfahrung"}),
+      chips("exp",EXP,m.exp,function(i){ m.exp=i; render(); }),
+      el("p",{class:"group-title",text:"Verfügbar"}),
+      chips("avail",AVAIL,m.avail,function(i){ m.avail=i; render(); }),
+      el("p",{class:"group-title",text:"Gehaltswunsch"}),
+      chips("wish",WISH.map(function(w){return w.l;}),m.wish,function(i){ m.wish=i; render(); }),
+      el("p",{class:"group-title",text:"Sonstiges"}),
+      el("div",{class:"row"},[
+        el("button",{type:"button",class:"chip",id:"opt-shift","aria-pressed":String(m.shift),text:"schichtbereit",on:{click:function(){ m.shift=!m.shift; render(); }}}),
+        el("button",{type:"button",class:"chip",id:"opt-car","aria-pressed":String(m.car),text:"eigenes Auto",on:{click:function(){ m.car=!m.car; render(); }}})
+      ])
+    ]),
+    m.job ? el("p",{class:"muted"},["Dein Gehaltswunsch: ",el("b",{class:"num",text:eur(pay(m))+" brutto/Monat"})]) : null,
+    el("button",{class:"btn signal",id:"btn-send",type:"button",disabled:!m.job,text:m.job?"Bewerbung abschicken":"Erst einen Beruf wählen",on:{click:sendApplication}})
+  ];
+}
+function sendApplication(){
+  var m = S.me;
+  m.name = (m.name||"").trim().slice(0,18) || "Ohne Namen";
+  S.applySecs = Math.max(1, Math.round((Date.now()-S.applyStart)/1000));
+  if(LIVE){
+    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car})
+      .catch(function(){ toast("Bewerbung konnte nicht gespeichert werden. Prüfe deine Verbindung."); });
+  }
+  go("sent");
+}
+
+function sent(){
+  var ready = !LIVE || phase()!=="apply";
+  var n = Object.keys(L.cands).length;
+  return [
+    el("div",{class:"stripe"}),
+    el("p",{class:"step",text:"Bewerbung ist raus"}),
+    el("div",{class:"card"},[
+      el("p",{class:"muted",text:"Deine Bewerbung hat gedauert"}),
+      el("p",{class:"big",text:S.applySecs+" Sek."}),
+      el("p",{text:"Ein klassisches Verfahren mit Anschreiben, Lebenslauf und Upload am PC dauert oft eine halbe Stunde oder länger. Viele gewerbliche Fachkräfte haben weder die Unterlagen noch einen Laptop griffbereit."})
+    ]),
+    el("h2",{text:"Jetzt die andere Seite"}),
+    LIVE ? el("p",{},[el("b",{class:"num",text:String(n)})," Bewerbungen liegen im Kurs-Pool. Gleich stellst du aus genau diesem Pool ein."])
+         : el("p",{text:"Du bist ab sofort Personalleitung eines erfundenen Betriebs. Deine Bewerbung liegt mit anderen im Pool."}),
+    ready ? el("button",{class:"btn",id:"btn-brief",type:"button",text:"Zum Auftrag",on:{click:function(){ go("brief"); }}})
+          : el("p",{class:"card muted",text:"Warte kurz. Runde 2 wird gleich für alle gestartet."})
+  ];
+}
+
+function brief(){
+  S.G = LIVE ? liveGame() : soloGame();
+  var G = S.G;
+  return [
+    el("p",{class:"step",text:"Runde 2 von 2 · Du stellst ein"}),
+    el("h2",{text:"Dein Auftrag"}),
+    el("p",{text:"Du bist Personalleitung der erfundenen Nordhafen Logistik & Technik GmbH."}),
+    el("div",{class:"card"},[
+      el("p",{class:"group-title",text:"3 offene Stellen"}),
+      el("div",{class:"row"}, G.jobs.map(function(j){ return el("span",{class:"tag",text:JOBS[j].label}); })),
+      el("div",{class:"kv"},[
+        el("span",{text:"Budget für alle drei, brutto/Monat"}), el("span",{text:eur(G.budget)}),
+        el("span",{text:"Zeit"}), el("span",{text:SECONDS+" Sekunden"}),
+        el("span",{text:"Bewerbungen im Pool"}), el("span",{text:String(G.pool.length)})
+      ])
+    ]),
+    el("div",{class:"card"},[
+      el("p",{class:"group-title",text:"So wird gewertet"}),
+      el("p",{class:"small",text:"Pro Person: Stelle passt 4 Punkte, Erfahrung bis 3, sofort verfügbar 3 (in 4 Wochen 1), schichtbereit 1, eigenes Auto 1. Jede angefangenen 100 € über Budget kosten 1 Punkt. Maximal 36 Punkte."}),
+      el("p",{class:"small",text:"Achtung: Gute Leute sind schnell weg. Andere Betriebe suchen auch."})
+    ]),
+    el("button",{class:"btn signal",id:"btn-hire",type:"button",text:"Uhr starten",on:{click:startHiring}})
+  ];
+}
+
+function startHiring(){
+  S.picks = []; S.gone = {}; S.lost = []; S.left = SECONDS; S.filter = "alle";
+  S.screen = "hire"; render(); window.scrollTo(0,0);
+  clearInterval(S.timer);
+  S.timer = setInterval(tick, 1000);
+}
+function tick(){
+  S.left--;
+  var elapsed = SECONDS - S.left, lv = S.G.leavers;
+  Object.keys(lv).forEach(function(id){
+    var c = byId(id);
+    if(c && Number(lv[id])===elapsed && S.picks.indexOf(id)<0 && id!==uid){
+      S.gone[id] = true; S.lost.push(id);
+      toast(c.name+" hat bei einem anderen Betrieb zugesagt.");
+      renderList();
+    }
+  });
+  if(S.left<=0){ finish(); return; }
+  renderHud();
+}
+function finish(){
+  clearInterval(S.timer); S.timer = null;
+  S.usedSecs = SECONDS - Math.max(0,S.left);
+  toastEl.hidden = true;
+  if(LIVE){
+    var r = scoreAll();
+    room.child("hires/"+uid).set({picks:S.picks.slice(),spent:spent(),score:r.total,secs:S.usedSecs,over:r.over>0,self:S.picks.indexOf(uid)>-1,lost:S.lost.slice()})
+      .catch(function(){ toast("Ergebnis konnte nicht gespeichert werden."); });
+  }
+  go("result");
+}
+function toggle(id){
+  if(S.gone[id]) return;
+  var i = S.picks.indexOf(id);
+  if(i>-1) S.picks.splice(i,1);
+  else if(S.picks.length>=3){ toast("Du hast schon 3 ausgewählt. Tippe eine Auswahl an, um sie zu lösen."); return; }
+  else S.picks.push(id);
+  renderHud(); renderList();
+}
+
+var hudEl, listEl;
+function hire(){
+  hudEl = el("div",{class:"hud",id:"hud"});
+  listEl = el("div",{class:"list",id:"cand-list"});
+  var filters = [["alle","Alle"]].concat(S.G.jobs.map(function(j){ return [j,JOBS[j].short]; })).concat([["rest","Andere"]]);
+  var filterRow = el("div",{class:"row",id:"filter",role:"group"}, filters.map(function(f){
+    return el("button",{type:"button",class:"chip",id:"filter-"+f[0],"aria-pressed":String(S.filter===f[0]),text:f[1],on:{click:function(){
+      S.filter = f[0];
+      Array.prototype.forEach.call(filterRow.children,function(b){ b.setAttribute("aria-pressed",String(b.id==="filter-"+S.filter)); });
+      renderList();
+    }}});
+  }));
+  setTimeout(function(){ renderHud(); renderList(); },0);
+  return [hudEl, filterRow, listEl];
+}
+function renderHud(){
+  if(!hudEl) return;
+  var sp = spent(), over = sp>S.G.budget;
+  hudEl.replaceChildren(
+    el("div",{class:"row between"},[
+      el("div",{},[el("div",{class:"lbl",text:"Zeit"}),el("div",{class:"val",text:Math.max(0,S.left)+" s"})]),
+      el("div",{},[el("div",{class:"lbl",text:"Eingestellt"}),el("div",{class:"val",text:S.picks.length+" / 3"})]),
+      el("div",{},[el("div",{class:"lbl",text:over?"Über Budget":"Budget frei"}),el("div",{class:"val"+(over?" over":""),text:eur(Math.abs(S.G.budget-sp))})])
+    ]),
+    el("div",{class:"bar"},[el("i",{style:"width:"+Math.max(0,S.left/SECONDS*100)+"%"})]),
+    el("button",{class:"btn signal",id:"btn-done",type:"button",disabled:S.picks.length===0,text:S.picks.length===3?"Verträge abschicken":"Mit "+S.picks.length+" von 3 abschließen",on:{click:finish}})
+  );
+}
+function candCard(c, interactive){
+  var picked = S.picks.indexOf(c.id)>-1, gone = !!S.gone[c.id];
+  var tags = [
+    el("span",{class:"tag",text:EXP[c.exp]}),
+    el("span",{class:"tag "+(c.avail===0?"good":c.avail===1?"warn":"crit"),text:AVAIL[c.avail]}),
+    c.shift?el("span",{class:"tag",text:"schichtbereit"}):null,
+    c.car?el("span",{class:"tag",text:"eigenes Auto"}):null
+  ];
+  var head = el("div",{class:"row between"},[
+    el("div",{},[
+      el("div",{class:"name",text:c.name}),
+      el("div",{class:"small muted",text:JOBS[c.job].label})
+    ]),
+    el("div",{class:"pay",text:eur(pay(c))})
+  ]);
+  var status = gone ? el("span",{class:"tag crit",text:"vergeben"}) : picked ? el("span",{class:"tag good",text:"ausgewählt"}) : null;
+  var kids = [head, el("div",{class:"row"},tags), el("div",{class:"row"},[c.id===uid?el("span",{class:"tag own",text:"Deine Bewerbung"}):null, status])];
+  if(!interactive) return el("div",{class:"cand"},kids);
+  return el("button",{type:"button",class:"cand"+(gone?" gone":""),id:"cand-"+c.id,"aria-pressed":String(picked),disabled:gone,on:{click:function(){ toggle(c.id); }}},kids);
+}
+function renderList(){
+  if(!listEl) return;
+  var jobs = S.G.jobs;
+  var shown = S.G.pool.filter(function(c){
+    if(S.filter==="alle") return true;
+    if(S.filter==="rest") return jobs.indexOf(c.job)<0;
+    return c.job===S.filter;
+  });
+  if(!shown.length){ listEl.replaceChildren(el("p",{class:"muted",text:"Keine Bewerbungen in dieser Gruppe."})); return; }
+  listEl.replaceChildren.apply(listEl, shown.map(function(c){ return candCard(c,true); }));
+}
+
+function result(){
+  var r = scoreAll(), sp = spent(), G = S.G;
+  var hiredSelf = S.picks.indexOf(uid)>-1;
+  var verdict = r.total>=28?"Starke Besetzung":r.total>=20?"Solide Besetzung":"Da war mehr drin";
+  var lostNames = S.lost.map(function(id){ var c = byId(id); return c?c.name:""; }).filter(Boolean);
+  return [
+    el("div",{class:"stripe"}),
+    el("p",{class:"step",text:"Auswertung"}),
+    el("h2",{text:verdict}),
+    el("div",{class:"card"},[
+      el("p",{class:"muted",text:"Dein Besetzungs-Score"}),
+      el("p",{class:"big",text:r.total+" / 36"}),
+      el("div",{class:"kv"},[
+        el("span",{text:"Stellen besetzt"}), el("span",{text:(3-r.unfilled.length)+" von 3"}),
+        el("span",{text:"Gehälter gesamt"}), el("span",{text:eur(sp)}),
+        el("span",{text:r.over?"Über Budget":"Budget übrig"}), el("span",{text:eur(Math.abs(G.budget-sp))}),
+        el("span",{text:"Zeit gebraucht"}), el("span",{text:S.usedSecs+" s"}),
+        r.malus?el("span",{text:"Abzug Budget"}):null, r.malus?el("span",{text:"−"+r.malus+" Punkte"}):null
+      ])
+    ]),
+    el("p",{class:"group-title",text:"Deine Einstellungen"}),
+    el("div",{class:"list"}, r.rows.length ? r.rows.map(function(x){
+      var card = candCard(x.c,false);
+      card.appendChild(el("div",{class:"row between small"},[
+        el("span",{class:x.match?"":"muted",text:x.match?"Passt auf die Stelle":"Quereinstieg, passt auf keine offene Stelle"}),
+        el("b",{class:"num",text:x.points+" Punkte"})
+      ]));
+      return card;
+    }) : [el("p",{class:"muted",text:"Du hast niemanden eingestellt."})]),
+    r.unfilled.length ? el("p",{},[el("b",{text:"Unbesetzt: "}), r.unfilled.map(function(j){return JOBS[j].label;}).join(", ")]) : null,
+    lostNames.length ? el("p",{},[el("b",{text:"An andere Betriebe verloren: "}), lostNames.join(", ")]) : null,
+    el("p",{text:hiredSelf?"Du hast deine eigene Bewerbung eingestellt.":"Deine eigene Bewerbung hast du nicht eingestellt."}),
+    LIVE && phase()==="results" ? el("div",{class:"stack"},[el("h2",{text:"So hat der Kurs entschieden"})].concat(classStats())) : null,
+    LIVE && phase()!=="results" ? el("p",{class:"card muted",text:"Die Kursauswertung erscheint hier, sobald sie freigegeben wird."}) : null,
+    el("div",{class:"card"},[
+      el("p",{class:"group-title",text:"Für die Diskussion im Kurs"}),
+      el("ol",{class:"q"},[
+        el("li",{text:"Wem wurde jemand weggeschnappt? Wer war schnell genug, und was hat das gekostet?"}),
+        el("li",{text:"Worauf hast du unter Zeitdruck zuerst geschaut: Gehalt, Erfahrung oder Verfügbarkeit?"}),
+        el("li",{text:"Hättest du dich selbst eingestellt? Warum (nicht)?"}),
+        el("li",{text:"Was hätte dir als Recruiter gefehlt, wenn alle nur ein Anschreiben geschickt hätten?"})
+      ])
+    ]),
+    !LIVE ? el("button",{class:"btn ghost",id:"btn-again",type:"button",text:"Runde 2 noch einmal spielen",on:{click:function(){ go("brief"); }}}) : null,
+    el("p",{class:"small muted",text:"Punkte und Gehälter sind Spielwerte, keine Marktdaten."})
+  ];
+}
+
+/* ---------- Kursauswertung (Teilnehmer und Moderation) ---------- */
+function classStats(){
+  var ids = Object.keys(L.hires), n = ids.length;
+  if(!n) return [el("p",{class:"muted",text:"Noch keine Ergebnisse."})];
+  var names = {};
+  candList().forEach(function(c){ names[c.id] = c; });
+  var fl = (L.state && L.state.fillers)||{};
+  Object.keys(fl).forEach(function(id){ var c = cleanCand(id,fl[id]); if(c) names[id] = c; });
+  var sum = 0, over = 0, self = 0, counts = {}, lostAny = 0;
+  ids.forEach(function(id){
+    var h = L.hires[id]||{};
+    sum += Number(h.score)||0; if(h.over) over++; if(h.self) self++;
+    if(Array.isArray(h.lost) && h.lost.length) lostAny++;
+    (Array.isArray(h.picks)?h.picks:[]).slice(0,3).forEach(function(p){ counts[p] = (counts[p]||0)+1; });
+  });
+  var top = Object.keys(counts).filter(function(id){ return names[id]; }).sort(function(a,b){ return counts[b]-counts[a]; }).slice(0,8);
+  var max = top.length ? counts[top[0]] : 1;
+  var pct = function(x){ return Math.round(x/n*100)+" %"; };
+  var rank = el("div",{class:"rank"});
+  top.forEach(function(id){
+    var c = names[id];
+    rank.appendChild(el("span",{},[el("b",{text:c.name})," · "+JOBS[c.job].label+" · "+eur(pay(c))]));
+    rank.appendChild(el("b",{class:"num",text:counts[id]+"×"}));
+    rank.appendChild(el("div",{class:"track"},[el("i",{style:"width:"+(counts[id]/max*100)+"%"})]));
+  });
+  return [
+    el("div",{class:"tiles"},[
+      el("div",{class:"tile"},[el("div",{class:"small muted",text:"Recruiter"}),el("div",{class:"v",text:String(n)})]),
+      el("div",{class:"tile"},[el("div",{class:"small muted",text:"Score im Schnitt"}),el("div",{class:"v",text:(sum/n).toFixed(1).replace(".",",")+" / 36"})]),
+      el("div",{class:"tile"},[el("div",{class:"small muted",text:"Über Budget"}),el("div",{class:"v",text:pct(over)})]),
+      el("div",{class:"tile"},[el("div",{class:"small muted",text:"Jemanden verloren"}),el("div",{class:"v",text:pct(lostAny)})]),
+      el("div",{class:"tile"},[el("div",{class:"small muted",text:"Sich selbst eingestellt"}),el("div",{class:"v",text:pct(self)})])
+    ]),
+    el("div",{class:"card"},[el("p",{class:"group-title",text:"Am häufigsten eingestellt"}), rank])
+  ];
+}
+
+/* ---------- Moderation (Seite mit ?host öffnen) ---------- */
+function host(){
+  var joinUrl = location.origin + location.pathname;
+  var nC = Object.keys(L.cands).length, nH = Object.keys(L.hires).length, ph = phase();
+  var qrBox = el("div",{class:"qr"});
+  try{
+    var q = qrcode(0,"M"); q.addData(joinUrl); q.make();
+    qrBox.innerHTML = q.createSvgTag({cellSize:6,margin:2,scalable:true});
+  }catch(e){ qrBox.appendChild(el("p",{text:"QR-Code konnte nicht erzeugt werden. Nutzt den Link."})); }
+  var control;
+  if(!LIVE){
+    control = [el("p",{class:"card",text:"Kein gemeinsamer Pool: Die Firebase-Konfiguration fehlt oder ist nicht erreichbar. Teilnehmer spielen im Einzelmodus."})];
+  } else if(!L.loaded){
+    control = [el("p",{class:"card muted",text:L.failed?"Die Datenbank antwortet nicht. Prüfe Regeln und Konfiguration.":"Verbinde mit der Datenbank …"})];
+  } else if(ph==="apply"){
+    control = [
+      el("p",{class:"step",text:"Runde 1 läuft"}),
+      el("div",{class:"card"},[el("p",{class:"muted",text:"Bewerbungen im Pool"}),el("p",{class:"huge",text:String(nC)})]),
+      el("button",{class:"btn signal",id:"host-start",type:"button",disabled:nC===0,text:"Runde 2 für alle starten",on:{click:function(){
+        var g = buildGame(candList());
+        room.child("state").set({phase:"hire",round:(L.state&&L.state.round)||Date.now(),jobs:g.jobs,budget:g.budget,fillers:g.fillers,leavers:g.leavers});
+      }}})
+    ];
+  } else if(ph==="hire"){
+    control = [
+      el("p",{class:"step",text:"Runde 2 läuft"}),
+      el("div",{class:"card"},[el("p",{class:"muted",text:"Fertige Recruiter"}),el("p",{class:"huge",text:nH+" / "+nC})]),
+      el("p",{},[el("b",{text:"Offene Stellen: "}),((L.state.jobs||[]).map(function(j){ return JOBS[j]?JOBS[j].label:""; })).join(", ")]),
+      el("button",{class:"btn signal",id:"host-results",type:"button",text:"Auswertung für alle zeigen",on:{click:function(){ room.child("state/phase").set("results"); }}})
+    ];
+  } else {
+    control = [el("p",{class:"step",text:"Auswertung"})].concat(classStats());
+  }
+  var reset = LIVE && L.loaded ? el("button",{class:"btn danger",id:"host-reset",type:"button",text:S.confirmReset?"Wirklich alles löschen? Noch einmal tippen":"Neu starten und Pool leeren",on:{click:function(){
+    if(!S.confirmReset){ S.confirmReset = true; render(); setTimeout(function(){ S.confirmReset = false; render(); },4000); return; }
+    S.confirmReset = false;
+    room.set({state:{phase:"apply",round:Date.now()}});
+  }}}) : null;
+  return [
+    el("div",{class:"stripe"}),
+    el("h1",{text:"Schichtwechsel"}),
+    el("div",{class:"hostgrid"},[
+      el("div",{class:"stack"},[qrBox, el("p",{class:"url",text:joinUrl}), el("p",{class:"small muted",text:"Moderationsansicht. Teilnehmer scannen den Code oder öffnen den Link."})]),
+      el("div",{class:"stack"},control.concat([reset]))
+    ])
+  ];
+}
+
+/* ---------- Rendern ---------- */
+var SCREENS = {start:start,apply:apply,sent:sent,brief:brief,hire:hire,result:result};
+function render(){
+  var keep = document.activeElement && document.activeElement.id;
+  hudEl = null; listEl = null;
+  app.className = IS_HOST ? "host" : "";
+  var nodes = IS_HOST ? host() : SCREENS[S.screen]();
+  app.replaceChildren.apply(app, nodes.filter(Boolean));
+  if(keep && keep!=="cand-name"){ var f = document.getElementById(keep); if(f) f.focus({preventScroll:true}); }
+}
+
+/* ---------- Live-Daten ---------- */
+function onLive(){
+  if(IS_HOST){ render(); return; }
+  var r = L.state ? L.state.round : null;
+  if(S.screen!=="start" && S.round!==null && r!==null && r!==S.round){
+    clearInterval(S.timer); S.timer = null; S.round = r; S.me.job = null;
+    toast("Die Runde wurde neu gestartet."); go("start"); return;
+  }
+  if(S.round===null) S.round = r;
+  if(S.screen==="sent" || S.screen==="result") render();
+}
+if(LIVE){
+  var loadTimer = setTimeout(function(){ if(!L.loaded){ L.failed = true; if(IS_HOST) render(); } }, 10000);
+  room.on("value", function(snap){
+    var v = snap.val() || {};
+    L.state = v.state || null; L.cands = v.candidates || {}; L.hires = v.hires || {};
+    L.loaded = true; L.failed = false; clearTimeout(loadTimer);
+    onLive();
+  }, function(){ L.failed = true; clearTimeout(loadTimer); if(IS_HOST) render(); });
+}
+render();
+})();
+</script>
+</body>
+</html>
