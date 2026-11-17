@@ -73,6 +73,7 @@ button:focus-visible,input:focus-visible{outline:3px solid var(--signal);outline
 .tpl{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:12px;text-align:left;min-height:56px;font-weight:600}
 .tpl[aria-pressed="true"]{border-color:var(--denim);box-shadow:inset 0 0 0 2px var(--denim)}
 label.field{display:flex;flex-direction:column;gap:6px;font-weight:600}
+input[type=range]{width:100%;accent-color:var(--denim);height:32px;margin:0}
 input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:1.5px solid var(--line);border-radius:8px;padding:12px}
 .group-title{font-weight:600}
 .big{font-family:var(--display);font-weight:700;font-size:3.2rem;line-height:1;font-variant-numeric:tabular-nums}
@@ -140,29 +141,34 @@ var AVAIL = ["sofort","in 4 Wochen","in 3 Monaten"];
 var WISH = [{l:"bescheiden",d:-150},{l:"marktüblich",d:0},{l:"selbstbewusst",d:250}];
 var SECONDS = 90, LEAVE_AT = [25,45,65], ROOM = "sw/main";
 var NAMES = ["Alex","Kim","Robin","Sascha","Toni","Jona","Mika","Luca","Charlie","Noa"];
-var FILL_NAMES = ["Murat K.","Jana S.","Tom B.","Andrzej W.","Selin A.","Uwe H.","Fatima R.","Kevin M.","Dragan P."];
+var FILL_NAMES = ["Murat Muster","Jana Muster","Tom Muster","Andrzej Muster","Selin Muster","Uwe Muster","Fatima Muster","Kevin Muster","Dragan Muster"];
 var FILL_PROFILES = [
   {exp:3,avail:0,wish:2,shift:true,car:true},
   {exp:0,avail:0,wish:0,shift:true,car:false},
   {exp:2,avail:1,wish:1,shift:false,car:true}
 ];
 var SOLO_EXTRA = [
-  {id:"x1",name:"Lena F.",job:"baecker",exp:2,avail:0,wish:1,shift:true,car:false},
-  {id:"x2",name:"Pawel N.",job:"dach",exp:2,avail:1,wish:1,shift:false,car:true},
-  {id:"x3",name:"Maria C.",job:"reinigung",exp:3,avail:0,wish:0,shift:true,car:false},
-  {id:"x4",name:"Henrik J.",job:"landwirt",exp:1,avail:0,wish:1,shift:true,car:true},
-  {id:"x5",name:"Deniz Y.",job:"kfz",exp:2,avail:2,wish:2,shift:false,car:true}
+  {id:"x1",name:"Lena Muster",job:"baecker",exp:2,avail:0,wish:1,shift:true,car:false},
+  {id:"x2",name:"Pawel Muster",job:"dach",exp:2,avail:1,wish:1,shift:false,car:true},
+  {id:"x3",name:"Maria Muster",job:"reinigung",exp:3,avail:0,wish:0,shift:true,car:false},
+  {id:"x4",name:"Henrik Muster",job:"landwirt",exp:1,avail:0,wish:1,shift:true,car:true},
+  {id:"x5",name:"Deniz Muster",job:"kfz",exp:2,avail:2,wish:2,shift:false,car:true}
 ];
 
-function pay(c){ return JOBS[c.job].base + c.exp*150 + WISH[c.wish].d; }
+var PAY_MIN = 1500, PAY_MAX = 5000, PAY_STEP = 50;
+function market(c){ return JOBS[c.job].base + c.exp*150; }
+function pay(c){ return (typeof c.pay==="number") ? c.pay : market(c) + WISH[c.wish].d; }
+function cleanPay(v){ v = Math.round(Number(v)/PAY_STEP)*PAY_STEP; return (v>=PAY_MIN && v<=PAY_MAX) ? v : null; }
 function quality(c){ return c.exp + [3,1,0][c.avail] + (c.shift?1:0) + (c.car?1:0); }
 function clampInt(v,max){ v = Math.floor(Number(v)); return (v>=0 && v<=max) ? v : 0; }
 /* Daten aus der gemeinsamen Datenbank sind fremde Eingaben: prüfen und kürzen. */
 function cleanCand(id, raw){
   if(!raw || typeof raw!=="object" || !JOBS[raw.job]) return null;
-  return {id:String(id), name:String(raw.name||"Ohne Namen").slice(0,18), job:raw.job,
+  var c = {id:String(id), name:String(raw.name||"Ohne Namen").slice(0,18), job:raw.job,
     exp:clampInt(raw.exp,3), avail:clampInt(raw.avail,2), wish:clampInt(raw.wish,2),
     shift:!!raw.shift, car:!!raw.car};
+  var p = cleanPay(raw.pay); if(p!==null) c.pay = p;
+  return c;
 }
 
 /* ---------- Identität und Modus ---------- */
@@ -184,7 +190,7 @@ try{
 /* ---------- Zustand ---------- */
 var S = {
   screen:"start", round:null,
-  me:{id:uid,name:NAMES[Math.floor(Math.random()*NAMES.length)],job:null,exp:1,avail:0,wish:1,shift:true,car:true},
+  me:{id:uid,name:NAMES[Math.floor(Math.random()*NAMES.length)],job:null,exp:1,avail:0,wish:1,shift:true,car:true,pay:3000,payTouched:false},
   applyStart:0, applySecs:0,
   G:null,                       // aktuelles Spiel: {jobs,budget,pool,leavers}
   picks:[], gone:{}, lost:[], left:SECONDS, timer:null, usedSecs:0, filter:"alle",
@@ -221,15 +227,15 @@ function candList(){ return Object.keys(L.cands).map(function(id){ return cleanC
 function phase(){ return (L.state && L.state.phase) || "apply"; }
 
 /* ---------- Spielaufbau ---------- */
-/* Wählt die 3 offenen Stellen nach den häufigsten Berufen im Pool, füllt dünn besetzte Berufe
-   mit Beispielkandidaten auf und legt fest, wer wann abspringt. */
+/* Wählt die 3 offenen Stellen nach den häufigsten Berufen im Pool, legt zu jeder Stelle immer
+   3 vorbereitete Profile (Nachname "Muster") dazu und bestimmt, wer wann abspringt. */
 function buildGame(real){
   var count = {};
   real.forEach(function(c){ count[c.job] = (count[c.job]||0)+1; });
   var jobs = TEMPLATES.slice().sort(function(a,b){ return (count[b]||0)-(count[a]||0) || TEMPLATES.indexOf(a)-TEMPLATES.indexOf(b); }).slice(0,3);
   var fillers = {}, n = 0;
   jobs.forEach(function(j){
-    for(var i=(count[j]||0); i<3; i++){
+    for(var i=0; i<3; i++){
       var p = FILL_PROFILES[i];
       fillers["f"+n] = {name:FILL_NAMES[n%FILL_NAMES.length],job:j,exp:p.exp,avail:p.avail,wish:p.wish,shift:p.shift,car:p.car};
       n++;
@@ -294,6 +300,10 @@ function start(){
 function apply(){
   var m = S.me;
   var nameInput = el("input",{type:"text",id:"cand-name",maxlength:"18",value:m.name,autocomplete:"off",on:{input:function(e){ m.name = e.target.value; }}});
+  var payOut = el("b",{class:"num",id:"cand-pay-out",text:eur(m.pay)});
+  var paySlider = el("input",{type:"range",id:"cand-pay",min:String(PAY_MIN),max:String(PAY_MAX),step:String(PAY_STEP),value:String(m.pay),on:{input:function(e){
+    m.pay = cleanPay(e.target.value) || m.pay; m.payTouched = true; payOut.textContent = eur(m.pay);
+  }}});
   return [
     el("p",{class:"step",text:"Runde 1 von 2 · Du bewirbst dich"}),
     el("h2",{text:"Kurzbewerbung"}),
@@ -301,33 +311,37 @@ function apply(){
     el("div",{class:"stack"},[
       el("p",{class:"group-title",text:"Welcher Beruf?"}),
       el("div",{class:"grid2",id:"tpl"}, TEMPLATES.map(function(j){
-        return el("button",{type:"button",class:"tpl",id:"tpl-"+j,"aria-pressed":String(m.job===j),text:JOBS[j].label,on:{click:function(){ m.job=j; render(); }}});
+        return el("button",{type:"button",class:"tpl",id:"tpl-"+j,"aria-pressed":String(m.job===j),text:JOBS[j].label,on:{click:function(){ m.job=j; syncPay(); render(); }}});
       }))
     ]),
     el("label",{class:"field",for:"cand-name"},["Vorname deiner Figur", nameInput]),
     el("div",{class:"stack"},[
       el("p",{class:"group-title",text:"Berufserfahrung"}),
-      chips("exp",EXP,m.exp,function(i){ m.exp=i; render(); }),
+      chips("exp",EXP,m.exp,function(i){ m.exp=i; syncPay(); render(); }),
       el("p",{class:"group-title",text:"Verfügbar"}),
       chips("avail",AVAIL,m.avail,function(i){ m.avail=i; render(); }),
-      el("p",{class:"group-title",text:"Gehaltswunsch"}),
-      chips("wish",WISH.map(function(w){return w.l;}),m.wish,function(i){ m.wish=i; render(); }),
+      el("label",{class:"field",for:"cand-pay"},[
+        el("span",{class:"row between"},[el("span",{text:"Gehaltswunsch brutto/Monat"}), payOut]),
+        paySlider
+      ]),
+      el("div",{class:"row between small muted"},[el("span",{text:eur(PAY_MIN)}), el("span",{text:m.job?"üblich in diesem Spiel: "+eur(market(m)):""}), el("span",{text:eur(PAY_MAX)})]),
       el("p",{class:"group-title",text:"Sonstiges"}),
       el("div",{class:"row"},[
         el("button",{type:"button",class:"chip",id:"opt-shift","aria-pressed":String(m.shift),text:"schichtbereit",on:{click:function(){ m.shift=!m.shift; render(); }}}),
         el("button",{type:"button",class:"chip",id:"opt-car","aria-pressed":String(m.car),text:"eigenes Auto",on:{click:function(){ m.car=!m.car; render(); }}})
       ])
     ]),
-    m.job ? el("p",{class:"muted"},["Dein Gehaltswunsch: ",el("b",{class:"num",text:eur(pay(m))+" brutto/Monat"})]) : null,
     el("button",{class:"btn signal",id:"btn-send",type:"button",disabled:!m.job,text:m.job?"Bewerbung abschicken":"Erst einen Beruf wählen",on:{click:sendApplication}})
   ];
 }
+/* Solange der Regler nicht bewegt wurde, folgt er dem üblichen Wert für Beruf und Erfahrung. */
+function syncPay(){ var m = S.me; if(m.job && !m.payTouched) m.pay = market(m); }
 function sendApplication(){
   var m = S.me;
   m.name = (m.name||"").trim().slice(0,18) || "Ohne Namen";
   S.applySecs = Math.max(1, Math.round((Date.now()-S.applyStart)/1000));
   if(LIVE){
-    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car})
+    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car,pay:m.pay})
       .catch(function(){ toast("Bewerbung konnte nicht gespeichert werden. Prüfe deine Verbindung."); });
   }
   go("sent");
@@ -371,7 +385,8 @@ function brief(){
     el("div",{class:"card"},[
       el("p",{class:"group-title",text:"So wird gewertet"}),
       el("p",{class:"small",text:"Pro Person: Stelle passt 4 Punkte, Erfahrung bis 3, sofort verfügbar 3 (in 4 Wochen 1), schichtbereit 1, eigenes Auto 1. Jede angefangenen 100 € über Budget kosten 1 Punkt. Maximal 36 Punkte."}),
-      el("p",{class:"small",text:"Achtung: Gute Leute sind schnell weg. Andere Betriebe suchen auch."})
+      el("p",{class:"small",text:"Achtung: Gute Leute sind schnell weg. Andere Betriebe suchen auch."}),
+      el("p",{class:"small",text:"Profile mit dem Nachnamen Muster sind vorbereitete Beispiele mit üblichen Gehältern."})
     ]),
     el("button",{class:"btn signal",id:"btn-hire",type:"button",text:"Uhr starten",on:{click:startHiring}})
   ];
@@ -618,7 +633,7 @@ function render(){
   app.className = IS_HOST ? "host" : "";
   var nodes = IS_HOST ? host() : SCREENS[S.screen]();
   app.replaceChildren.apply(app, nodes.filter(Boolean));
-  if(keep && keep!=="cand-name"){ var f = document.getElementById(keep); if(f) f.focus({preventScroll:true}); }
+  if(keep && keep!=="cand-name" && keep!=="cand-pay"){ var f = document.getElementById(keep); if(f) f.focus({preventScroll:true}); }
 }
 
 /* ---------- Live-Daten ---------- */
