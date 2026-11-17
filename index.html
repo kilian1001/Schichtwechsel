@@ -143,15 +143,16 @@ var JOBS = {
 var TEMPLATES = ["elektrik","fahrer","lager","landwirt","bergbau","baecker","dach","kfz","reinigung","pflege"];
 var EXP = ["unter 1 Jahr","1–3 Jahre","4–9 Jahre","10+ Jahre"];
 var AVAIL = ["sofort","in 4 Wochen","in 3 Monaten"];
+var DIST = ["unter 15 km","15–40 km","über 40 km"];
 var WISH = [{l:"bescheiden",d:-150},{l:"marktüblich",d:0},{l:"selbstbewusst",d:250}];
-var SECONDS = 120, LEAVE_AT = [30,55,80,100], HIRES = 5, MAXPTS = 60, LEAD = 20, ROOM = "sw/main";
+var SECONDS = 120, LEAVE_AT = [30,55,80,100], HIRES = 5, MAXPTS = 90, LEAD = 40, ROOM = "sw/main";
 var NAMES = ["Alex","Kim","Robin","Sascha","Toni","Jona","Mika","Luca","Charlie","Noa"];
 var FILL_NAMES = ["Murat Muster","Jana Muster","Tom Muster","Andrzej Muster","Selin Muster","Uwe Muster","Fatima Muster","Kevin Muster","Dragan Muster","Olga Muster","Emre Muster","Paula Muster"];
 var FILL_PROFILES = [
-  {exp:3,avail:0,wish:2,shift:true,car:true},
-  {exp:0,avail:0,wish:0,shift:true,car:false},
-  {exp:2,avail:1,wish:1,shift:true,car:true},
-  {exp:1,avail:0,wish:1,shift:false,car:true}
+  {exp:3,avail:0,wish:2,shift:true,car:true,edu:true,dist:1},
+  {exp:0,avail:0,wish:0,shift:true,car:false,edu:false,dist:0},
+  {exp:2,avail:1,wish:1,shift:true,car:true,edu:true,dist:2},
+  {exp:1,avail:0,wish:1,shift:false,car:true,edu:false,dist:1}
 ];
 function shuffle(a){ for(var k=a.length-1;k>0;k--){ var r = Math.floor(Math.random()*(k+1)), t = a[k]; a[k] = a[r]; a[r] = t; } return a; }
 /* 5 Stellen: zwei für den häufigsten Beruf, zwei für den zweiten, eine für den dritten. */
@@ -159,7 +160,7 @@ function slotsFor(jobs){ return jobs.length>=3 ? [jobs[0],jobs[0],jobs[1],jobs[1
 /* Budget: fest 15.000 €. Nur wenn die gezogenen Berufe so teuer sind, dass selbst übliche
    Einstiegsgehälter nicht hineinpassen, steigt es auf deren Summe, damit die Runde lösbar bleibt. */
 var BUDGET = 15000;
-function budgetFor(slots){ return Math.max(BUDGET, slots.reduce(function(sum,j){ return sum+JOBS[j].base; },0)); }
+function budgetFor(slots){ return Math.max(BUDGET, slots.reduce(function(sum,j){ return sum+JOBS[j].base; },0) + 300); }
 var SOLO_EXTRA = [
   {id:"x1",name:"Lena Muster",job:"baecker",exp:2,avail:0,wish:1,shift:true,car:false},
   {id:"x2",name:"Pawel Muster",job:"dach",exp:2,avail:1,wish:1,shift:false,car:true},
@@ -169,17 +170,17 @@ var SOLO_EXTRA = [
 ];
 
 var PAY_MIN = 1500, PAY_MAX = 5000, PAY_STEP = 50;
-function market(c){ return JOBS[c.job].base + c.exp*150; }
+function market(c){ return JOBS[c.job].base + c.exp*150 + (c.edu?400:0); }
 function pay(c){ return (typeof c.pay==="number") ? c.pay : market(c) + WISH[c.wish].d; }
 function cleanPay(v){ v = Math.round(Number(v)/PAY_STEP)*PAY_STEP; return (v>=PAY_MIN && v<=PAY_MAX) ? v : null; }
-function quality(c){ return c.exp + [3,1,0][c.avail] + (c.shift?1:0) + (c.car?1:0); }
+function quality(c){ return c.exp + [3,1,0][c.avail] + (c.shift?1:0) + (c.car?1:0) + (c.edu?3:0) + [2,1,0][c.dist||0]; }
 function clampInt(v,max){ v = Math.floor(Number(v)); return (v>=0 && v<=max) ? v : 0; }
 /* Daten aus der gemeinsamen Datenbank sind fremde Eingaben: prüfen und kürzen. */
 function cleanCand(id, raw){
   if(!raw || typeof raw!=="object" || !JOBS[raw.job]) return null;
   var c = {id:String(id), name:String(raw.name||"Ohne Namen").slice(0,18), job:raw.job,
     exp:clampInt(raw.exp,3), avail:clampInt(raw.avail,2), wish:clampInt(raw.wish,2),
-    shift:!!raw.shift, car:!!raw.car};
+    shift:!!raw.shift, car:!!raw.car, edu:!!raw.edu, dist:clampInt(raw.dist,2)};
   var p = cleanPay(raw.pay); if(p!==null) c.pay = p;
   return c;
 }
@@ -208,7 +209,7 @@ if(LIVE){ try{ firebase.database().ref(".info/serverTimeOffset").on("value", fun
 /* ---------- Zustand ---------- */
 var S = {
   screen:"start", round:null,
-  me:{id:uid,name:NAMES[Math.floor(Math.random()*NAMES.length)],job:null,exp:1,avail:0,wish:1,shift:true,car:true,pay:3000,payTouched:false},
+  me:{id:uid,name:NAMES[Math.floor(Math.random()*NAMES.length)],job:null,exp:1,avail:0,wish:1,shift:true,car:true,edu:false,dist:0,pay:3000,payTouched:false},
   applyStart:0, applySecs:0,
   G:null,                       // aktuelles Spiel: {jobs,budget,pool,leavers}
   picks:[], gone:{}, handled:{}, lost:[], left:SECONDS, endAt:0, timer:null, briefTimer:null, ownSeen:false, usedSecs:0, filter:"alle",
@@ -259,7 +260,7 @@ function buildGame(real){
     var k = 1 + Math.floor(Math.random()*4);
     k = Math.max(k, need[j] - (count[j]||0));
     shuffle(FILL_PROFILES.slice()).slice(0,k).forEach(function(p){
-      fillers["f"+n] = {name:names[n%names.length],job:j,exp:p.exp,avail:p.avail,wish:p.wish,shift:p.shift,car:p.car};
+      fillers["f"+n] = {name:names[n%names.length],job:j,exp:p.exp,avail:p.avail,wish:p.wish,shift:p.shift,car:p.car,edu:p.edu,dist:p.dist};
       n++;
     });
   });
@@ -274,7 +275,7 @@ function soloGame(){
   var b = buildGame([]);
   var pool = Object.keys(b.fillers).map(function(id){ return cleanCand(id,b.fillers[id]); });
   pool.splice(5,0,S.me);
-  return {jobs:b.jobs,slots:b.slots,budget:b.budget,pool:pool.concat(SOLO_EXTRA),leavers:b.leavers};
+  return {jobs:b.jobs,slots:b.slots,budget:b.budget,pool:pool.concat(SOLO_EXTRA.map(function(c){ return cleanCand(c.id,c); })),leavers:b.leavers};
 }
 function liveGame(){
   var st = L.state || {};
@@ -287,7 +288,7 @@ function liveGame(){
   return {jobs:jobs,slots:slots,budget:budgetFor(slots),pool:pool,leavers:st.leavers||{}};
 }
 
-/* Punkte: Stelle passt 4, Erfahrung 0–3, Verfügbarkeit 3/1/0, Schicht 1, Auto 1. Max. 12 pro Person. */
+/* Punkte pro Person, max. 17: Stelle passt 4, Erfahrung 0–3, Verfügbarkeit 3/1/0, Ausbildung 3, Arbeitsweg 2/1/0, Schicht 1, Auto 1. */
 function scoreAll(){
   var G = S.G, open = {}, rows = [], total = 0;
   G.slots.forEach(function(j){ open[j] = (open[j]||0)+1; });
@@ -300,7 +301,9 @@ function scoreAll(){
   var over = Math.max(0, spent()-G.budget), malus = Math.ceil(over/100);
   var unfilled = [];
   Object.keys(open).forEach(function(j){ for(var i=0;i<open[j];i++) unfilled.push(j); });
-  return {rows:rows,total:Math.max(0,total-malus),malus:malus,over:over,unfilled:unfilled};
+  /* Bonus nur bei voller Besetzung, sonst würde sich Nicht-Einstellen lohnen. */
+  var bonus = (!unfilled.length && !over) ? Math.min(5, Math.floor((G.budget-spent())/200)) : 0;
+  return {rows:rows,total:Math.max(0,total-malus+bonus),malus:malus,bonus:bonus,over:over,unfilled:unfilled};
 }
 function slotTags(slots){
   var n = {}, order = [];
@@ -352,8 +355,11 @@ function apply(){
         paySlider
       ]),
       el("div",{class:"row between small muted"},[el("span",{text:eur(PAY_MIN)}), el("span",{text:m.job?"üblich in diesem Spiel: "+eur(market(m)):""}), el("span",{text:eur(PAY_MAX)})]),
+      el("p",{class:"group-title",text:"Arbeitsweg zum Betrieb"}),
+      chips("dist",DIST,m.dist,function(i){ m.dist=i; render(); }),
       el("p",{class:"group-title",text:"Sonstiges"}),
       el("div",{class:"row"},[
+        el("button",{type:"button",class:"chip",id:"opt-edu","aria-pressed":String(m.edu),text:"abgeschlossene Ausbildung",on:{click:function(){ m.edu=!m.edu; syncPay(); render(); }}}),
         el("button",{type:"button",class:"chip",id:"opt-shift","aria-pressed":String(m.shift),text:"schichtbereit",on:{click:function(){ m.shift=!m.shift; render(); }}}),
         el("button",{type:"button",class:"chip",id:"opt-car","aria-pressed":String(m.car),text:"eigenes Auto",on:{click:function(){ m.car=!m.car; render(); }}})
       ])
@@ -368,7 +374,7 @@ function sendApplication(){
   m.name = (m.name||"").trim().slice(0,18) || "Ohne Namen";
   S.applySecs = Math.max(1, Math.round((Date.now()-S.applyStart)/1000));
   if(LIVE){
-    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car,pay:m.pay,t:now()})
+    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car,edu:m.edu,dist:m.dist,pay:m.pay,t:now()})
       .catch(function(){ toast("Bewerbung konnte nicht gespeichert werden. Prüfe deine Verbindung."); });
   }
   go("sent");
@@ -411,9 +417,10 @@ function brief(){
     ]),
     el("div",{class:"card"},[
       el("p",{class:"group-title",text:"So wird gewertet"}),
-      el("p",{class:"small",text:"Pro Person: Stelle passt 4 Punkte, Erfahrung bis 3, sofort verfügbar 3 (in 4 Wochen 1), schichtbereit 1, eigenes Auto 1. Jede angefangenen 100 € über Budget kosten 1 Punkt. Maximal "+MAXPTS+" Punkte."}),
-      el("p",{class:"small",text:"Achtung: Gute Leute sind schnell weg. Andere Betriebe suchen auch."}),
-      el("p",{class:"small",text:"Profile mit dem Nachnamen Muster sind vorbereitete Beispiele mit üblichen Gehältern."})
+      el("p",{class:"small",text:"Pro Person bis 17 Punkte: Stelle passt 4 · Erfahrung bis 3 · sofort verfügbar 3 (in 4 Wochen 1) · abgeschlossene Ausbildung 3 · Arbeitsweg unter 15 km 2 (bis 40 km 1) · schichtbereit 1 · eigenes Auto 1."}),
+      el("p",{class:"small"},[el("b",{text:"Unter Budget: "}),"+1 Punkt je volle 200 € Ersparnis, höchstens +5. Den Bonus gibt es nur, wenn alle "+HIRES+" Stellen passend besetzt sind."]),
+      el("p",{class:"small"},[el("b",{text:"Über Budget: "}),"−1 Punkt je angefangene 100 €."]),
+      el("p",{class:"small",text:"Maximal "+MAXPTS+" Punkte. Gute Leute sind schnell weg, andere Betriebe suchen auch. Profile mit dem Nachnamen Muster sind vorbereitete Beispiele."})
     ]),
     startControl()
   ];
@@ -441,7 +448,7 @@ function startControl(){
 
 function startHiring(sharedAt){
   clearInterval(S.briefTimer); clearInterval(S.timer);
-  S.picks = []; S.gone = {}; S.handled = {}; S.lost = [];
+  S.picks = []; S.gone = {}; S.handled = {}; S.lost = []; S.filter = "alle";
   S.endAt = (typeof sharedAt==="number" ? sharedAt : now()) + SECONDS*1000;
   S.left = Math.max(0, Math.ceil((S.endAt-now())/1000));
   S.screen = "hire"; render(); window.scrollTo(0,0);
@@ -489,7 +496,15 @@ function hire(){
   hudEl = el("div",{class:"hud",id:"hud"});
   listEl = el("div",{class:"list",id:"cand-list"});
   setTimeout(function(){ renderHud(); renderList(); },0);
-  return [hudEl, el("p",{class:"small muted",text:"Sortiert nach Gehaltswunsch, günstigste zuerst."}), listEl];
+  var filters = [["alle","Alle"]].concat(S.G.jobs.map(function(j){ return [j,JOBS[j].short]; })).concat([["rest","Andere"]]);
+  var filterRow = el("div",{class:"row",id:"filter",role:"group"}, filters.map(function(f){
+    return el("button",{type:"button",class:"chip",id:"filter-"+f[0],"aria-pressed":String(S.filter===f[0]),text:f[1],on:{click:function(){
+      S.filter = f[0];
+      Array.prototype.forEach.call(filterRow.children,function(b){ b.setAttribute("aria-pressed",String(b.id==="filter-"+S.filter)); });
+      renderList();
+    }}});
+  }));
+  return [hudEl, filterRow, el("p",{class:"small muted",text:"Sortiert nach Gehaltswunsch, günstigste zuerst."}), listEl];
 }
 function renderHud(){
   if(!hudEl) return;
@@ -520,6 +535,8 @@ function candCard(c, interactive){
   var tags = [
     el("span",{class:"tag",text:EXP[c.exp]}),
     el("span",{class:"tag "+(c.avail===0?"good":c.avail===1?"warn":"crit"),text:AVAIL[c.avail]}),
+    c.edu?el("span",{class:"tag",text:"Ausbildung"}):null,
+    el("span",{class:"tag",text:DIST[c.dist||0]}),
     c.shift?el("span",{class:"tag",text:"schichtbereit"}):null,
     c.car?el("span",{class:"tag",text:"eigenes Auto"}):null
   ];
@@ -537,14 +554,20 @@ function candCard(c, interactive){
 }
 function renderList(){
   if(!listEl) return;
-  var shown = S.G.pool.slice().sort(function(a,b){ return pay(a)-pay(b) || (a.id<b.id?-1:1); });
+  var jobs = S.G.jobs;
+  var shown = S.G.pool.filter(function(c){
+    if(S.filter==="alle") return true;
+    if(S.filter==="rest") return jobs.indexOf(c.job)<0;
+    return c.job===S.filter;
+  }).sort(function(a,b){ return pay(a)-pay(b) || (a.id<b.id?-1:1); });
+  if(!shown.length){ listEl.replaceChildren(el("p",{class:"muted",text:"Keine Bewerbungen in dieser Gruppe."})); return; }
   listEl.replaceChildren.apply(listEl, shown.map(function(c){ return candCard(c,true); }));
 }
 
 function result(){
   var r = scoreAll(), sp = spent(), G = S.G;
   var hiredSelf = S.picks.indexOf(uid)>-1;
-  var verdict = r.total>=46?"Starke Besetzung":r.total>=34?"Solide Besetzung":"Da war mehr drin";
+  var verdict = r.total>=68?"Starke Besetzung":r.total>=51?"Solide Besetzung":"Da war mehr drin";
   var lostNames = S.lost.map(function(id){ var c = byId(id); return c?c.name:""; }).filter(Boolean);
   return [
     el("div",{class:"stripe"}),
@@ -558,7 +581,8 @@ function result(){
         el("span",{text:"Gehälter gesamt"}), el("span",{text:eur(sp)}),
         el("span",{text:r.over?"Über Budget":"Budget übrig"}), el("span",{text:eur(Math.abs(G.budget-sp))}),
         el("span",{text:"Zeit gebraucht"}), el("span",{text:S.usedSecs+" s"}),
-        r.malus?el("span",{text:"Abzug Budget"}):null, r.malus?el("span",{text:"−"+r.malus+" Punkte"}):null
+        r.malus?el("span",{text:"Abzug über Budget"}):null, r.malus?el("span",{text:"−"+r.malus+" Punkte"}):null,
+        r.bonus?el("span",{text:"Bonus unter Budget"}):null, r.bonus?el("span",{text:"+"+r.bonus+" Punkte"}):null
       ])
     ]),
     el("p",{class:"group-title",text:"Deine Einstellungen"}),
