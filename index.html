@@ -141,12 +141,18 @@ var AVAIL = ["sofort","in 4 Wochen","in 3 Monaten"];
 var WISH = [{l:"bescheiden",d:-150},{l:"marktüblich",d:0},{l:"selbstbewusst",d:250}];
 var SECONDS = 120, LEAVE_AT = [30,55,80,100], HIRES = 5, MAXPTS = 60, ROOM = "sw/main";
 var NAMES = ["Alex","Kim","Robin","Sascha","Toni","Jona","Mika","Luca","Charlie","Noa"];
-var FILL_NAMES = ["Murat Muster","Jana Muster","Tom Muster","Andrzej Muster","Selin Muster","Uwe Muster","Fatima Muster","Kevin Muster","Dragan Muster"];
+var FILL_NAMES = ["Murat Muster","Jana Muster","Tom Muster","Andrzej Muster","Selin Muster","Uwe Muster","Fatima Muster","Kevin Muster","Dragan Muster","Olga Muster","Emre Muster","Paula Muster"];
 var FILL_PROFILES = [
   {exp:3,avail:0,wish:2,shift:true,car:true},
   {exp:0,avail:0,wish:0,shift:true,car:false},
-  {exp:2,avail:1,wish:1,shift:true,car:true}
+  {exp:2,avail:1,wish:1,shift:true,car:true},
+  {exp:1,avail:0,wish:1,shift:false,car:true}
 ];
+function shuffle(a){ for(var k=a.length-1;k>0;k--){ var r = Math.floor(Math.random()*(k+1)), t = a[k]; a[k] = a[r]; a[r] = t; } return a; }
+/* 5 Stellen: zwei für den häufigsten Beruf, zwei für den zweiten, eine für den dritten. */
+function slotsFor(jobs){ return jobs.length>=3 ? [jobs[0],jobs[0],jobs[1],jobs[1],jobs[2]] : jobs.slice(); }
+/* Budget: reicht genau, wenn man auf jede Stelle ein mittleres Profil (üblicher Wert + 300 €) setzt. */
+function budgetFor(slots){ return slots.reduce(function(sum,j){ return sum+JOBS[j].base+300; },0); }
 var SOLO_EXTRA = [
   {id:"x1",name:"Lena Muster",job:"baecker",exp:2,avail:0,wish:1,shift:true,car:false},
   {id:"x2",name:"Pawel Muster",job:"dach",exp:2,avail:1,wish:1,shift:false,car:true},
@@ -233,24 +239,24 @@ function buildGame(real){
   var count = {};
   real.forEach(function(c){ count[c.job] = (count[c.job]||0)+1; });
   var jobs = TEMPLATES.slice().sort(function(a,b){ return (count[b]||0)-(count[a]||0) || TEMPLATES.indexOf(a)-TEMPLATES.indexOf(b); }).slice(0,3);
-  var fillers = {}, n = 0;
+  var slots = slotsFor(jobs), need = {};
+  slots.forEach(function(j){ need[j] = (need[j]||0)+1; });
+  /* Pro Beruf zufällig 1 bis 4 Muster-Profile, mindestens so viele, dass jede Stelle besetzbar ist. */
+  var fillers = {}, n = 0, names = shuffle(FILL_NAMES.slice());
   jobs.forEach(function(j){
-    for(var i=0; i<3; i++){
-      var p = FILL_PROFILES[i];
-      fillers["f"+n] = {name:FILL_NAMES[n%FILL_NAMES.length],job:j,exp:p.exp,avail:p.avail,wish:p.wish,shift:p.shift,car:p.car};
+    var k = 1 + Math.floor(Math.random()*4);
+    k = Math.max(k, need[j] - (count[j]||0));
+    shuffle(FILL_PROFILES.slice()).slice(0,k).forEach(function(p){
+      fillers["f"+n] = {name:names[n%names.length],job:j,exp:p.exp,avail:p.avail,wish:p.wish,shift:p.shift,car:p.car};
       n++;
-    }
+    });
   });
   var all = real.concat(Object.keys(fillers).map(function(id){ return cleanCand(id,fillers[id]); }));
-  /* 5 Stellen: zwei für den häufigsten Beruf, zwei für den zweiten, eine für den dritten. */
-  var slots = [jobs[0],jobs[0],jobs[1],jobs[1],jobs[2]];
   /* Wer abspringt, wird pro Runde zufällig aus den passenden Bewerbungen gezogen. */
-  var cands = all.filter(function(c){ return jobs.indexOf(c.job)>-1; });
-  for(var k=cands.length-1;k>0;k--){ var r = Math.floor(Math.random()*(k+1)), t = cands[k]; cands[k] = cands[r]; cands[r] = t; }
+  var cands = shuffle(all.filter(function(c){ return jobs.indexOf(c.job)>-1; }));
   var leavers = {};
   LEAVE_AT.forEach(function(sec,i){ if(cands[i]) leavers[cands[i].id] = sec; });
-  var budget = slots.reduce(function(sum,j){ return sum+JOBS[j].base; },0) + 500;
-  return {jobs:jobs,slots:slots,budget:budget,fillers:fillers,leavers:leavers};
+  return {jobs:jobs,slots:slots,budget:budgetFor(slots),fillers:fillers,leavers:leavers};
 }
 function soloGame(){
   var b = buildGame([]);
@@ -261,14 +267,12 @@ function soloGame(){
 function liveGame(){
   var st = L.state || {};
   var jobs = (Array.isArray(st.jobs)?st.jobs:[]).filter(function(j){ return JOBS[j]; }).slice(0,3);
-  var slots = (Array.isArray(st.slots)?st.slots:[]).filter(function(j){ return JOBS[j]; }).slice(0,HIRES);
-  if(!slots.length) slots = jobs.slice();
+  var slots = slotsFor(jobs);
   var pool = candList();
   var fl = st.fillers||{};
   Object.keys(fl).forEach(function(id){ var c = cleanCand(id,fl[id]); if(c) pool.push(c); });
   if(!pool.some(function(c){ return c.id===uid; }) && S.me.job) pool.unshift(S.me);
-  pool.sort(function(a,b){ return a.id<b.id?-1:1; });
-  return {jobs:jobs,slots:slots,budget:Number(st.budget)||14000,pool:pool,leavers:st.leavers||{}};
+  return {jobs:jobs,slots:slots,budget:budgetFor(slots),pool:pool,leavers:st.leavers||{}};
 }
 
 /* Punkte: Stelle passt 4, Erfahrung 0–3, Verfügbarkeit 3/1/0, Schicht 1, Auto 1. Max. 12 pro Person. */
@@ -395,7 +399,7 @@ function brief(){
     ]),
     el("div",{class:"card"},[
       el("p",{class:"group-title",text:"So wird gewertet"}),
-      el("p",{class:"small",text:"Pro Person: Stelle passt 4 Punkte, Erfahrung bis 3, sofort verfügbar 3 (in 4 Wochen 1), schichtbereit 1, eigenes Auto 1. Jede angefangenen 100 € über Budget kosten 1 Punkt. Maximal "+MAXPTS+" Punkte. Das Budget ist knapp: Nur Mittelklasse einzustellen, geht nicht auf."}),
+      el("p",{class:"small",text:"Pro Person: Stelle passt 4 Punkte, Erfahrung bis 3, sofort verfügbar 3 (in 4 Wochen 1), schichtbereit 1, eigenes Auto 1. Jede angefangenen 100 € über Budget kosten 1 Punkt. Maximal "+MAXPTS+" Punkte."}),
       el("p",{class:"small",text:"Achtung: Gute Leute sind schnell weg. Andere Betriebe suchen auch."}),
       el("p",{class:"small",text:"Profile mit dem Nachnamen Muster sind vorbereitete Beispiele mit üblichen Gehältern."})
     ]),
@@ -447,16 +451,8 @@ var hudEl, listEl;
 function hire(){
   hudEl = el("div",{class:"hud",id:"hud"});
   listEl = el("div",{class:"list",id:"cand-list"});
-  var filters = [["alle","Alle"]].concat(S.G.jobs.map(function(j){ return [j,JOBS[j].short]; })).concat([["rest","Andere"]]);
-  var filterRow = el("div",{class:"row",id:"filter",role:"group"}, filters.map(function(f){
-    return el("button",{type:"button",class:"chip",id:"filter-"+f[0],"aria-pressed":String(S.filter===f[0]),text:f[1],on:{click:function(){
-      S.filter = f[0];
-      Array.prototype.forEach.call(filterRow.children,function(b){ b.setAttribute("aria-pressed",String(b.id==="filter-"+S.filter)); });
-      renderList();
-    }}});
-  }));
   setTimeout(function(){ renderHud(); renderList(); },0);
-  return [hudEl, filterRow, listEl];
+  return [hudEl, el("p",{class:"small muted",text:"Sortiert nach Gehaltswunsch, günstigste zuerst."}), listEl];
 }
 function renderHud(){
   if(!hudEl) return;
@@ -493,13 +489,7 @@ function candCard(c, interactive){
 }
 function renderList(){
   if(!listEl) return;
-  var jobs = S.G.jobs;
-  var shown = S.G.pool.filter(function(c){
-    if(S.filter==="alle") return true;
-    if(S.filter==="rest") return jobs.indexOf(c.job)<0;
-    return c.job===S.filter;
-  });
-  if(!shown.length){ listEl.replaceChildren(el("p",{class:"muted",text:"Keine Bewerbungen in dieser Gruppe."})); return; }
+  var shown = S.G.pool.slice().sort(function(a,b){ return pay(a)-pay(b) || (a.id<b.id?-1:1); });
   listEl.replaceChildren.apply(listEl, shown.map(function(c){ return candCard(c,true); }));
 }
 
@@ -615,7 +605,7 @@ function host(){
     control = [
       el("p",{class:"step",text:"Runde 2 läuft"}),
       el("div",{class:"card"},[el("p",{class:"muted",text:"Fertige Recruiter"}),el("p",{class:"huge",text:nH+" / "+nC})]),
-      el("div",{class:"row"},[el("b",{text:"Offene Stellen:"})].concat(slotTags((Array.isArray(L.state.slots)?L.state.slots:[]).filter(function(j){ return JOBS[j]; })))),
+      el("div",{class:"row"},[el("b",{text:"Offene Stellen:"})].concat(slotTags(slotsFor((Array.isArray(L.state.jobs)?L.state.jobs:[]).filter(function(j){ return JOBS[j]; }))))),
       el("button",{class:"btn signal",id:"host-results",type:"button",text:"Auswertung für alle zeigen",on:{click:function(){ room.child("state/phase").set("results"); }}})
     ];
   } else {
