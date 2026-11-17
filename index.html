@@ -89,6 +89,11 @@ input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:
 .hud .lbl{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;opacity:.75}
 .hud .val{font-family:var(--display);font-weight:700;font-size:1.6rem;line-height:1;font-variant-numeric:tabular-nums}
 .hud .val.over{color:var(--signal)}
+.hud .slots{gap:6px}
+.slot{border:1px solid currentColor;border-radius:4px;padding:2px 8px;font-size:.8rem;font-weight:600;opacity:.85}
+.slot.done{background:var(--signal);color:var(--signal-ink);border-color:var(--signal);opacity:1}
+.tick{border-top:1px solid var(--line);padding-top:8px;flex-wrap:nowrap}
+.tick span{overflow-wrap:anywhere}
 .bar{height:6px;background:rgba(127,127,127,.35);border-radius:3px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--signal);width:100%}
 .cand{background:var(--surface);border:1.5px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;text-align:left;width:100%}
@@ -139,7 +144,7 @@ var TEMPLATES = ["elektrik","fahrer","lager","landwirt","bergbau","baecker","dac
 var EXP = ["unter 1 Jahr","1–3 Jahre","4–9 Jahre","10+ Jahre"];
 var AVAIL = ["sofort","in 4 Wochen","in 3 Monaten"];
 var WISH = [{l:"bescheiden",d:-150},{l:"marktüblich",d:0},{l:"selbstbewusst",d:250}];
-var SECONDS = 120, LEAVE_AT = [30,55,80,100], HIRES = 5, MAXPTS = 60, ROOM = "sw/main";
+var SECONDS = 120, LEAVE_AT = [30,55,80,100], HIRES = 5, MAXPTS = 60, LEAD = 20, ROOM = "sw/main";
 var NAMES = ["Alex","Kim","Robin","Sascha","Toni","Jona","Mika","Luca","Charlie","Noa"];
 var FILL_NAMES = ["Murat Muster","Jana Muster","Tom Muster","Andrzej Muster","Selin Muster","Uwe Muster","Fatima Muster","Kevin Muster","Dragan Muster","Olga Muster","Emre Muster","Paula Muster"];
 var FILL_PROFILES = [
@@ -151,8 +156,10 @@ var FILL_PROFILES = [
 function shuffle(a){ for(var k=a.length-1;k>0;k--){ var r = Math.floor(Math.random()*(k+1)), t = a[k]; a[k] = a[r]; a[r] = t; } return a; }
 /* 5 Stellen: zwei für den häufigsten Beruf, zwei für den zweiten, eine für den dritten. */
 function slotsFor(jobs){ return jobs.length>=3 ? [jobs[0],jobs[0],jobs[1],jobs[1],jobs[2]] : jobs.slice(); }
-/* Budget: reicht genau, wenn man auf jede Stelle ein mittleres Profil (üblicher Wert + 300 €) setzt. */
-function budgetFor(slots){ return slots.reduce(function(sum,j){ return sum+JOBS[j].base+300; },0); }
+/* Budget: fest 15.000 €. Nur wenn die gezogenen Berufe so teuer sind, dass selbst übliche
+   Einstiegsgehälter nicht hineinpassen, steigt es auf deren Summe, damit die Runde lösbar bleibt. */
+var BUDGET = 15000;
+function budgetFor(slots){ return Math.max(BUDGET, slots.reduce(function(sum,j){ return sum+JOBS[j].base; },0)); }
 var SOLO_EXTRA = [
   {id:"x1",name:"Lena Muster",job:"baecker",exp:2,avail:0,wish:1,shift:true,car:false},
   {id:"x2",name:"Pawel Muster",job:"dach",exp:2,avail:1,wish:1,shift:false,car:true},
@@ -193,13 +200,18 @@ try{
   }
 }catch(e){ LIVE = false; }
 
+/* Gemeinsame Uhr: Firebase liefert die Abweichung der Geräteuhr zur Serverzeit. */
+var OFFSET = 0;
+function now(){ return Date.now() + OFFSET; }
+if(LIVE){ try{ firebase.database().ref(".info/serverTimeOffset").on("value", function(sn){ OFFSET = Number(sn.val())||0; }); }catch(e){} }
+
 /* ---------- Zustand ---------- */
 var S = {
   screen:"start", round:null,
   me:{id:uid,name:NAMES[Math.floor(Math.random()*NAMES.length)],job:null,exp:1,avail:0,wish:1,shift:true,car:true,pay:3000,payTouched:false},
   applyStart:0, applySecs:0,
   G:null,                       // aktuelles Spiel: {jobs,budget,pool,leavers}
-  picks:[], gone:{}, lost:[], left:SECONDS, timer:null, usedSecs:0, filter:"alle",
+  picks:[], gone:{}, handled:{}, lost:[], left:SECONDS, endAt:0, timer:null, briefTimer:null, ownSeen:false, usedSecs:0, filter:"alle",
   confirmReset:false
 };
 var app = document.getElementById("app");
@@ -356,7 +368,7 @@ function sendApplication(){
   m.name = (m.name||"").trim().slice(0,18) || "Ohne Namen";
   S.applySecs = Math.max(1, Math.round((Date.now()-S.applyStart)/1000));
   if(LIVE){
-    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car,pay:m.pay})
+    room.child("candidates/"+uid).set({name:m.name,job:m.job,exp:m.exp,avail:m.avail,wish:m.wish,shift:m.shift,car:m.car,pay:m.pay,t:now()})
       .catch(function(){ toast("Bewerbung konnte nicht gespeichert werden. Prüfe deine Verbindung."); });
   }
   go("sent");
@@ -403,27 +415,52 @@ function brief(){
       el("p",{class:"small",text:"Achtung: Gute Leute sind schnell weg. Andere Betriebe suchen auch."}),
       el("p",{class:"small",text:"Profile mit dem Nachnamen Muster sind vorbereitete Beispiele mit üblichen Gehältern."})
     ]),
-    el("button",{class:"btn signal",id:"btn-hire",type:"button",text:"Uhr starten",on:{click:startHiring}})
+    startControl()
   ];
 }
+/* Im Kurs-Modus startet die Uhr für alle gleichzeitig. Wer zu spät kommt (weniger als 30 s übrig)
+   oder allein spielt, startet eine eigene Uhr. */
+function sharedStart(){
+  var st = L.state;
+  if(!LIVE || !st || st.phase!=="hire" || typeof st.startAt!=="number") return null;
+  return (st.startAt + SECONDS*1000 - now() >= 30000) ? st.startAt : null;
+}
+function startControl(){
+  clearInterval(S.briefTimer);
+  var at = sharedStart();
+  if(at===null) return el("button",{class:"btn signal",id:"btn-hire",type:"button",text:"Uhr starten",on:{click:function(){ startHiring(null); }}});
+  if(now()>=at) return el("button",{class:"btn signal",id:"btn-hire",type:"button",text:"Einsteigen, die Uhr läuft schon",on:{click:function(){ startHiring(sharedStart()); }}});
+  var out = el("p",{class:"big",id:"brief-countdown",text:Math.ceil((at-now())/1000)+" s"});
+  S.briefTimer = setInterval(function(){
+    var left = Math.ceil((at-now())/1000);
+    if(left<=0){ clearInterval(S.briefTimer); startHiring(sharedStart()); }
+    else out.textContent = left+" s";
+  }, 250);
+  return el("div",{class:"card"},[el("p",{class:"muted",text:"Die Uhr startet für alle gleichzeitig in"}), out]);
+}
 
-function startHiring(){
-  S.picks = []; S.gone = {}; S.lost = []; S.left = SECONDS; S.filter = "alle";
+function startHiring(sharedAt){
+  clearInterval(S.briefTimer); clearInterval(S.timer);
+  S.picks = []; S.gone = {}; S.handled = {}; S.lost = [];
+  S.endAt = (typeof sharedAt==="number" ? sharedAt : now()) + SECONDS*1000;
+  S.left = Math.max(0, Math.ceil((S.endAt-now())/1000));
   S.screen = "hire"; render(); window.scrollTo(0,0);
-  clearInterval(S.timer);
-  S.timer = setInterval(tick, 1000);
+  S.timer = setInterval(tick, 500);
+  tick();
 }
 function tick(){
-  S.left--;
-  var elapsed = SECONDS - S.left, lv = S.G.leavers;
+  S.left = Math.ceil((S.endAt-now())/1000);
+  var elapsed = SECONDS - S.left, lv = S.G.leavers, changed = false;
   Object.keys(lv).forEach(function(id){
+    if(S.handled[id] || elapsed < Number(lv[id])) return;
+    S.handled[id] = true;
     var c = byId(id);
-    if(c && Number(lv[id])===elapsed && S.picks.indexOf(id)<0 && id!==uid){
-      S.gone[id] = true; S.lost.push(id);
+    if(c && S.picks.indexOf(id)<0 && id!==uid){
+      S.gone[id] = true; S.lost.push(id); changed = true;
       toast(c.name+" hat bei einem anderen Betrieb zugesagt.");
-      renderList();
     }
   });
+  if(changed) renderList();
   if(S.left<=0){ finish(); return; }
   renderHud();
 }
@@ -464,8 +501,19 @@ function renderHud(){
       el("div",{},[el("div",{class:"lbl",text:over?"Über Budget":"Budget frei"}),el("div",{class:"val"+(over?" over":""),text:eur(Math.abs(S.G.budget-sp))})])
     ]),
     el("div",{class:"bar"},[el("i",{style:"width:"+Math.max(0,S.left/SECONDS*100)+"%"})]),
+    slotStatus(),
     el("button",{class:"btn signal",id:"btn-done",type:"button",disabled:S.picks.length===0,text:S.picks.length===HIRES?"Verträge abschicken":"Mit "+S.picks.length+" von "+HIRES+" abschließen",on:{click:finish}})
   );
+}
+/* Zeigt je Beruf, wie viele Stellen schon passend besetzt sind. */
+function slotStatus(){
+  var need = {}, have = {}, order = [];
+  S.G.slots.forEach(function(j){ if(!need[j]){ need[j] = 0; order.push(j); } need[j]++; });
+  S.picks.forEach(function(id){ var c = byId(id); if(c && need[c.job]) have[c.job] = Math.min(need[c.job],(have[c.job]||0)+1); });
+  return el("div",{class:"row slots",id:"slot-status"}, order.map(function(j){
+    var h = have[j]||0, done = h>=need[j];
+    return el("span",{class:"slot"+(done?" done":""),text:JOBS[j].label+" "+h+"/"+need[j]});
+  }));
 }
 function candCard(c, interactive){
   var picked = S.picks.indexOf(c.id)>-1, gone = !!S.gone[c.id];
@@ -525,6 +573,7 @@ function result(){
     r.unfilled.length ? el("p",{},[el("b",{text:"Unbesetzt: "}), r.unfilled.map(function(j){return JOBS[j].label;}).join(", ")]) : null,
     lostNames.length ? el("p",{},[el("b",{text:"An andere Betriebe verloren: "}), lostNames.join(", ")]) : null,
     el("p",{text:hiredSelf?"Du hast deine eigene Bewerbung eingestellt.":"Deine eigene Bewerbung hast du nicht eingestellt."}),
+    ownDemand(),
     LIVE && phase()==="results" ? el("div",{class:"stack"},[el("h2",{text:"So hat der Kurs entschieden"})].concat(classStats())) : null,
     LIVE && phase()!=="results" ? el("p",{class:"card muted",text:"Die Kursauswertung erscheint hier, sobald sie freigegeben wird."}) : null,
     el("div",{class:"card"},[
@@ -539,6 +588,20 @@ function result(){
     !LIVE ? el("button",{class:"btn ghost",id:"btn-again",type:"button",text:"Runde 2 noch einmal spielen",on:{click:function(){ go("brief"); }}}) : null,
     el("p",{class:"small muted",text:"Punkte und Gehälter sind Spielwerte, keine Marktdaten."})
   ];
+}
+
+/* Wie viele andere Recruiter haben meine Bewerbung eingestellt? */
+function ownDemand(){
+  if(!LIVE || !L.cands[uid]) return null;
+  var others = Object.keys(L.hires).filter(function(id){ return id!==uid; });
+  var n = others.filter(function(id){ var pk = (L.hires[id]||{}).picks; return Array.isArray(pk) && pk.indexOf(uid)>-1; }).length;
+  var wanted = S.G.jobs.indexOf(S.me.job)>-1;
+  return el("div",{class:"card"},[
+    el("p",{class:"muted",text:"So oft wurde deine Bewerbung eingestellt"}),
+    el("p",{class:"big",text:n+" von "+others.length}),
+    el("p",{class:"small",text:"Gezählt werden die anderen Recruiter, die schon fertig sind. Die Zahl aktualisiert sich."}),
+    wanted ? null : el("p",{class:"small muted",text:"Dein Beruf war in dieser Runde nicht ausgeschrieben."})
+  ]);
 }
 
 /* ---------- Kursauswertung (Teilnehmer und Moderation) ---------- */
@@ -579,6 +642,26 @@ function classStats(){
 }
 
 /* ---------- Moderation (Seite mit ?host öffnen) ---------- */
+function hostClock(){
+  var st = L.state||{};
+  if(typeof st.startAt!=="number") return ["Uhr","–"];
+  var toStart = Math.ceil((st.startAt-now())/1000), left = Math.ceil((st.startAt+SECONDS*1000-now())/1000);
+  if(toStart>0) return ["Briefing, Uhr startet in", toStart+" s"];
+  if(left>0) return ["Verbleibende Zeit", left+" s"];
+  return ["Zeit", "abgelaufen"];
+}
+/* Eingehende Bewerbungen, neueste zuerst, mit Knopf zum Entfernen. */
+function ticker(){
+  var ids = Object.keys(L.cands).sort(function(a,b){ return (Number((L.cands[b]||{}).t)||0) - (Number((L.cands[a]||{}).t)||0); });
+  var rows = ids.map(function(id){
+    var c = cleanCand(id, L.cands[id]); if(!c) return null;
+    return el("div",{class:"row between tick"},[
+      el("span",{},[el("b",{text:c.name})," · "+JOBS[c.job].label+" · "+eur(pay(c))]),
+      el("button",{type:"button",class:"chip small",id:"rm-"+id,"aria-label":c.name+" entfernen",text:"Entfernen",on:{click:function(){ room.child("candidates/"+id).remove(); }}})
+    ]);
+  }).filter(Boolean);
+  return el("div",{class:"card"},[el("p",{class:"group-title",text:"Eingegangene Bewerbungen"})].concat(rows.length?rows:[el("p",{class:"muted",text:"Noch keine."})]));
+}
 function host(){
   var joinUrl = location.origin + location.pathname;
   var nC = Object.keys(L.cands).length, nH = Object.keys(L.hires).length, ph = phase();
@@ -598,13 +681,16 @@ function host(){
       el("div",{class:"card"},[el("p",{class:"muted",text:"Bewerbungen im Pool"}),el("p",{class:"huge",text:String(nC)})]),
       el("button",{class:"btn signal",id:"host-start",type:"button",disabled:nC===0,text:"Runde 2 für alle starten",on:{click:function(){
         var g = buildGame(candList());
-        room.child("state").set({phase:"hire",round:(L.state&&L.state.round)||Date.now(),jobs:g.jobs,slots:g.slots,budget:g.budget,fillers:g.fillers,leavers:g.leavers});
-      }}})
+        room.child("state").set({phase:"hire",round:(L.state&&L.state.round)||Date.now(),jobs:g.jobs,slots:g.slots,budget:g.budget,fillers:g.fillers,leavers:g.leavers,startAt:now()+LEAD*1000});
+      }}}),
+      el("p",{class:"small muted",text:"Nach dem Start haben alle "+LEAD+" Sekunden für das Briefing, dann läuft die Uhr für alle gleichzeitig."}),
+      ticker()
     ];
   } else if(ph==="hire"){
     control = [
       el("p",{class:"step",text:"Runde 2 läuft"}),
-      el("div",{class:"card"},[el("p",{class:"muted",text:"Fertige Recruiter"}),el("p",{class:"huge",text:nH+" / "+nC})]),
+      el("div",{class:"card"},[el("p",{class:"muted",id:"host-clock-label",text:hostClock()[0]}),el("p",{class:"huge",id:"host-clock",text:hostClock()[1]})]),
+      el("div",{class:"card"},[el("p",{class:"muted",text:"Fertige Recruiter"}),el("p",{class:"big",text:nH+" / "+nC})]),
       el("div",{class:"row"},[el("b",{text:"Offene Stellen:"})].concat(slotTags(slotsFor((Array.isArray(L.state.jobs)?L.state.jobs:[]).filter(function(j){ return JOBS[j]; }))))),
       el("button",{class:"btn signal",id:"host-results",type:"button",text:"Auswertung für alle zeigen",on:{click:function(){ room.child("state/phase").set("results"); }}})
     ];
@@ -631,6 +717,7 @@ var SCREENS = {start:start,apply:apply,sent:sent,brief:brief,hire:hire,result:re
 function render(){
   var keep = document.activeElement && document.activeElement.id;
   hudEl = null; listEl = null;
+  if(S.screen!=="brief") clearInterval(S.briefTimer);
   app.className = IS_HOST ? "host" : "";
   var nodes = IS_HOST ? host() : SCREENS[S.screen]();
   app.replaceChildren.apply(app, nodes.filter(Boolean));
@@ -642,11 +729,23 @@ function onLive(){
   if(IS_HOST){ render(); return; }
   var r = L.state ? L.state.round : null;
   if(S.screen!=="start" && S.round!==null && r!==null && r!==S.round){
-    clearInterval(S.timer); S.timer = null; S.round = r; S.me.job = null;
+    clearInterval(S.timer); clearInterval(S.briefTimer); S.timer = null; S.round = r; S.me.job = null; S.ownSeen = false;
     toast("Die Runde wurde neu gestartet."); go("start"); return;
   }
   if(S.round===null) S.round = r;
+  if(L.cands[uid]) S.ownSeen = true;
+  else if(S.ownSeen && S.screen==="sent"){
+    S.ownSeen = false; S.applyStart = Date.now();
+    toast("Deine Bewerbung wurde von der Moderation entfernt. Bitte fülle sie neu aus."); go("apply"); return;
+  }
+  if(S.screen==="sent" && phase()==="hire"){ go("brief"); return; }
   if(S.screen==="sent" || S.screen==="result") render();
+}
+if(IS_HOST){
+  setInterval(function(){
+    var a = document.getElementById("host-clock"), b = document.getElementById("host-clock-label");
+    if(a && b){ var c = hostClock(); b.textContent = c[0]; a.textContent = c[1]; }
+  }, 500);
 }
 if(LIVE){
   var loadTimer = setTimeout(function(){ if(!L.loaded){ L.failed = true; if(IS_HOST) render(); } }, 10000);
